@@ -70,11 +70,14 @@ class ClipState:
     current: Point2 | None = None
     window: Rect4 | None = None
 
+    preview_algo: str | None = None
+
     def reset(self) -> None:
         self.setting = False
         self.anchor = None
         self.current = None
         self.window = None
+        self.preview_algo = None
 
 
 @dataclass

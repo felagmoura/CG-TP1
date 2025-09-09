@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from typing import TypeAlias
 
@@ -131,3 +132,146 @@ def clamp_rect_to_canvas(rect: Rect4, width: int, height: int) -> Rect4:
     l = max(0, min(l, width - w))
     t = max(0, min(t, height - h))
     return (int(l), int(t), int(w), int(h))
+
+def _opposite_corner_for(handle: str, l0: int, t0: int, r0: int, b0: int) -> tuple[float, float]:
+    """Return the pivot corner (opposite to the dragged corner)."""
+    if handle == "se":  # pivot NW
+        return float(l0), float(t0)
+    if handle == "ne":  # pivot SW
+        return float(l0), float(b0)
+    if handle == "sw":  # pivot NE
+        return float(r0), float(t0)
+    if handle == "nw":  # pivot SE
+        return float(r0), float(b0)
+    # default (won't be used for edges)
+    return float(l0), float(t0)
+
+def _normalize_edges(l: float, t: float, r: float, b: float) -> tuple[int, int, int, int]:
+    """Ensure l<=r and t<=b; return ints."""
+    if r < l:
+        l, r = r, l
+    if b < t:
+        t, b = b, t
+    return int(round(l)), int(round(t)), int(round(r)), int(round(b))
+
+def resize_rect_from_handle(
+    rect0: tuple[int, int, int, int],
+    handle: str,
+    mouse: tuple[int, int],
+    *,
+    keep_aspect: bool = False,
+    from_center: bool = False,
+    min_w: int = 8,
+    min_h: int = 8,
+    bounds: tuple[int, int] | None = None,
+) -> tuple[int, int, int, int]:
+    """
+    Compute a new rect by 'dragging' a handle on rect0 toward mouse.
+    - rect0: (l,t,w,h)
+    - handle: one of "nw","n","ne","e","se","s","sw","w"
+    - mouse: current canvas-space cursor (mx,my)
+    - keep_aspect: if True, corners keep original aspect ratio (edges ignore)
+    - from_center: if True, resize symmetrically around rect center
+    - min_w/min_h: minimum resulting size
+    - bounds: (canvas_w, canvas_h) for clamping; if None, no clamp
+    Returns a normalized (l,t,w,h).
+    """
+    l0, t0, w0, h0 = rect0
+    r0 = l0 + w0
+    b0 = t0 + h0
+    mx, my = mouse
+    cx = (l0 + r0) / 2.0
+    cy = (t0 + b0) / 2.0
+    aspect = (w0 / h0) if h0 != 0 else 1.0
+
+    l, t, r, b = float(l0), float(t0), float(r0), float(b0)
+
+    # --- Corner handles ---
+    if handle in ("nw", "ne", "se", "sw"):
+        if from_center:
+            # Pivot at center; compute half-width/height from mouse
+            vx = mx - cx
+            vy = my - cy
+            # Aspect lock (corners only)
+            if keep_aspect and h0 != 0:
+                if abs(vx) / aspect >= abs(vy):
+                    vy = math.copysign(abs(vx) / aspect, vy if vy != 0 else 1.0)
+                else:
+                    vx = math.copysign(abs(vy) * aspect, vx if vx != 0 else 1.0)
+            # Enforce min size (half-dimensions when resizing from center)
+            half_w = max(min_w / 2.0, abs(vx))
+            half_h = max(min_h / 2.0, abs(vy))
+            l = cx - half_w
+            r = cx + half_w
+            t = cy - half_h
+            b = cy + half_h
+        else:
+            # Pivot at opposite corner
+            px, py = _opposite_corner_for(handle, l0, t0, r0, b0)
+            vx = mx - px
+            vy = my - py
+            # Aspect lock (corners only)
+            if keep_aspect and h0 != 0:
+                if abs(vx) / aspect >= abs(vy):
+                    vy = math.copysign(abs(vx) / aspect, vy if vy != 0 else 1.0)
+                else:
+                    vx = math.copysign(abs(vy) * aspect, vx if vx != 0 else 1.0)
+            # Enforce mins relative to pivot (full size)
+            if abs(vx) < min_w:
+                vx = math.copysign(min_w, vx if vx != 0 else 1.0)
+            if abs(vy) < min_h:
+                vy = math.copysign(min_h, vy if vy != 0 else 1.0)
+            # Build from pivot and vector
+            l = min(px, px + vx)
+            r = max(px, px + vx)
+            t = min(py, py + vy)
+            b = max(py, py + vy)
+
+    # --- Edge handles (1D) ---
+    elif handle in ("e", "w"):
+        if from_center:
+            half_w = max(min_w / 2.0, abs(mx - cx))
+            l = cx - half_w
+            r = cx + half_w
+        else:
+            if handle == "e":
+                l = l0
+                r = mx
+                # min width enforced keeping left fixed
+                if (r - l) < min_w:
+                    r = l + min_w
+            else:  # "w"
+                r = r0
+                l = mx
+                if (r - l) < min_w:
+                    l = r - min_w
+        # y-edges stay as original
+        t, b = float(t0), float(b0)
+
+    elif handle in ("n", "s"):
+        if from_center:
+            half_h = max(min_h / 2.0, abs(my - cy))
+            t = cy - half_h
+            b = cy + half_h
+        else:
+            if handle == "s":
+                t = t0
+                b = my
+                if (b - t) < min_h:
+                    b = t + min_h
+            else:  # "n"
+                b = b0
+                t = my
+                if (b - t) < min_h:
+                    t = b - min_h
+        # x-edges stay as original
+        l, r = float(l0), float(r0)
+
+    # Normalize to ints
+    L, T, R, B = _normalize_edges(l, t, r, b)
+    # Clamp to canvas
+    if bounds:
+        from .geom import clamp_rect_to_canvas  # local import to avoid cycles
+        L, T, W, H = clamp_rect_to_canvas((L, T, R - L, B - T), bounds[0], bounds[1])
+        return (L, T, W, H)
+    return (L, T, R - L, B - T)

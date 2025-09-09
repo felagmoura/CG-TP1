@@ -7,6 +7,7 @@ import pygame
 from . import config as C
 from .events import EventDispatcher
 from .render.renderer import clear_canvas, redraw_canvas_from_scene
+from .scene.ops import apply_clipping_to_lines
 from .scene.scene import Scene
 from .state import AppState, Mode, make_initial_state
 from .tools import (
@@ -14,7 +15,6 @@ from .tools import (
     ClipWindowTool,
     LineTool,
     SelectTransformTool,
-    clip_lines,
 )
 from .ui.overlay import draw_overlay
 from .ui.sidebar import Sidebar
@@ -46,6 +46,7 @@ def _init_fonts() -> tuple[pygame.font.Font, pygame.font.Font]:
         small = pygame.font.Font(None, C.FONT_SIZE_SMALL)
     return font, small
 
+
 def _wire_sidebar(
     sidebar: Sidebar,
     *,
@@ -53,10 +54,9 @@ def _wire_sidebar(
     scene: Scene,
     canvas: pygame.Surface,
 ) -> None:
-    
+
     def set_mode(mode: Mode) -> None:
         state.mode = mode
-        # Status hint (tools will set better messages on enter)
         state.status = f"{mode.name.title()}"
 
     def clear_all() -> None:
@@ -66,7 +66,20 @@ def _wire_sidebar(
         state.mode = Mode.IDLE
         state.status = "Cleared"
 
-    # Buttons (order matches your original UI)
+    # Persistent preview callbacks for clipping
+    def preview_clip_cs() -> None:
+        state.mode = Mode.CLIP_WINDOW
+        state.clip.preview_algo = "CS"
+        state.status = "Preview: Cohen–Sutherland (Enter=apply, 0=off)"
+        redraw_canvas_from_scene(canvas, scene, state)
+
+    def preview_clip_lb() -> None:
+        state.mode = Mode.CLIP_WINDOW
+        state.clip.preview_algo = "LB"
+        state.status = "Preview: Liang–Barsky (Enter=apply, 0=off)"
+        redraw_canvas_from_scene(canvas, scene, state)
+
+    # Buttons (order similar to original UI)
     sidebar.add_button("Select", lambda: set_mode(Mode.SELECT))
 
     sidebar.add_button("Line (DDA)", lambda: set_mode(Mode.LINE_DDA))
@@ -74,14 +87,8 @@ def _wire_sidebar(
     sidebar.add_button("Circle (Bresenham)", lambda: set_mode(Mode.CIRCLE_BRESENHAM))
 
     sidebar.add_button("Set Clip Window", lambda: set_mode(Mode.CLIP_WINDOW))
-    sidebar.add_button(
-        "Clip (Cohen-Suth.)",
-        lambda: clip_lines(algo="CS", scene=scene, state=state, canvas=canvas),
-    )
-    sidebar.add_button(
-        "Clip (Liang-Barsky)",
-        lambda: clip_lines(algo="LB", scene=scene, state=state, canvas=canvas),
-    )
+    sidebar.add_button("Preview: Cohen–Suth.", preview_clip_cs)
+    sidebar.add_button("Preview: Liang–Barsky", preview_clip_lb)
 
     sidebar.add_button("Clear Canvas", clear_all)
 
@@ -95,6 +102,7 @@ def main() -> None:
     state: AppState = make_initial_state()
     scene = Scene()
     sidebar = Sidebar()
+
     _wire_sidebar(sidebar, state=state, scene=scene, canvas=canvas)
 
     dispatcher = EventDispatcher(state=state, scene=scene, sidebar=sidebar, canvas=canvas)
@@ -121,6 +129,40 @@ def main() -> None:
                 if ev.key == pygame.K_v:
                     state.mode = Mode.SELECT
                     state.status = "Select / Transform"
+
+                elif ev.key == pygame.K_1:
+                    # Always enable persistent preview (Cohen–Sutherland)
+                    state.mode = Mode.CLIP_WINDOW
+                    state.clip.preview_algo = "CS"
+                    state.status = "Preview: Cohen–Sutherland (Enter=apply, 0=off)"
+                    redraw_canvas_from_scene(canvas, scene, state)
+
+                elif ev.key == pygame.K_2:
+                    # Always enable persistent preview (Liang–Barsky)
+                    state.mode = Mode.CLIP_WINDOW
+                    state.clip.preview_algo = "LB"
+                    state.status = "Preview: Liang–Barsky (Enter=apply, 0=off)"
+                    redraw_canvas_from_scene(canvas, scene, state)
+
+                elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    # Apply current preview destructively
+                    if state.clip.window and state.clip.preview_algo:
+                        rect = pygame.Rect(*state.clip.window)
+                        target = state.selection.selected_lines or None
+                        kept, removed = apply_clipping_to_lines(
+                            scene, rect, state.clip.preview_algo, target
+                        )
+                        state.status = f"Applied preview ({state.clip.preview_algo}): kept {kept}, removed {removed}"
+                        state.clip.preview_algo = None
+                        redraw_canvas_from_scene(canvas, scene, state)
+
+                elif ev.key == pygame.K_0:
+                    # Turn preview off
+                    if state.clip.preview_algo:
+                        state.clip.preview_algo = None
+                        state.status = "Preview off"
+                        redraw_canvas_from_scene(canvas, scene, state)
+
             else:
                 dispatcher.handle(ev)
 

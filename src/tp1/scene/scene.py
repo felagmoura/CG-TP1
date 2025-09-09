@@ -29,3 +29,4 @@ class Scene:
     def __len__(self) -> int:
         """Total number of primitives."""
         return len(self.lines) + len(self.circles)
+    

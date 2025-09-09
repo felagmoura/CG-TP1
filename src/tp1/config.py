@@ -74,4 +74,12 @@ CLIP_BORDER_WIDTH: int = 2
 CLIP_DASH_LEN: int = 6
 CLIP_DASH_GAP: int = 4
 
+# Clip window constraints
+CLIP_MIN_W: int = 8
+CLIP_MIN_H: int = 8
+
+# Keyboard nudge steps
+CLIP_NUDGE_STEP: int = 1       # Arrow keys
+CLIP_NUDGE_STEP_FAST: int = 10 # Shift + Arrow
+
 

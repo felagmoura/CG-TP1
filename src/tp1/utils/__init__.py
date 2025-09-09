@@ -4,13 +4,12 @@ from .geom import (
     bbox_handles,
     bbox_of_points,
     bbox_union,
+    clamp_rect_to_canvas,
+    move_rect,
     rect_center,
     rect_contains_point,
     rect_edges,
     rect_from_points,
-    move_rect,
-    clamp_rect_to_canvas,
-
 )
 from .transforms import (
     angle_from_center,
