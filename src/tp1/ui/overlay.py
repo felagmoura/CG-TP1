@@ -12,6 +12,7 @@ def _rect_from_tuple(r: tuple[int, int, int, int]) -> pygame.Rect:
     l, t, w, h = r
     return pygame.Rect(l, t, w, h)
 
+
 def _norm_rect(a: tuple[int, int] | None, b: tuple[int, int] | None) -> pygame.Rect | None:
     if not a or not b:
         return None
@@ -21,6 +22,7 @@ def _norm_rect(a: tuple[int, int] | None, b: tuple[int, int] | None) -> pygame.R
     w = abs(x1 - x0)
     h = abs(y1 - y0)
     return pygame.Rect(left, top, w, h)
+
 
 def _selection_bbox_and_pivot(scene: Scene, state: AppState) -> tuple[pygame.Rect, tuple[float, float]] | None:
     xs: list[int] = []
@@ -43,6 +45,7 @@ def _selection_bbox_and_pivot(scene: Scene, state: AppState) -> tuple[pygame.Rec
     cx, cy = (left + right) / 2.0, (top + bottom) / 2.0
     return rect, (cx, cy)
 
+
 def _sanitize_selection(scene: Scene, state: AppState) -> None:
     if state.selection.selected_lines:
         valid = {i for i in state.selection.selected_lines if 0 <= i < len(scene.lines)}
@@ -51,11 +54,47 @@ def _sanitize_selection(scene: Scene, state: AppState) -> None:
         valid = {i for i in state.selection.selected_circles if 0 <= i < len(scene.circles)}
         state.selection.selected_circles.intersection_update(valid)
 
-# --- local hit test for hover highlight (mirrors the tool logic) ---
-def _hit_test_handle(bbox: pygame.Rect, mouse_canvas: tuple[int, int]) -> str | None:
+
+# ---------- dashed stroke helpers (axis-aligned) ----------
+
+def _dashed_hline(surf: pygame.Surface, y: int, x0: int, x1: int, color, dash: int, gap: int, width: int) -> None:
+    if x1 < x0:
+        x0, x1 = x1, x0
+    step = max(1, dash + gap)
+    x = x0
+    while x <= x1:
+        xe = min(x + dash, x1)
+        pygame.draw.line(surf, color, (x, y), (xe, y), width)
+        x += step
+
+
+def _dashed_vline(surf: pygame.Surface, x: int, y0: int, y1: int, color, dash: int, gap: int, width: int) -> None:
+    if y1 < y0:
+        y0, y1 = y1, y0
+    step = max(1, dash + gap)
+    y = y0
+    while y <= y1:
+        ye = min(y + dash, y1)
+        pygame.draw.line(surf, color, (x, y), (x, ye), width)
+        y += step
+
+
+def _draw_dashed_rect(surf: pygame.Surface, rect: pygame.Rect, color, width: int, dash: int, gap: int) -> None:
+    l, t, w, h = rect
+    r = l + w
+    b = t + h
+    _dashed_hline(surf, t, l, r, color, dash, gap, width)
+    _dashed_hline(surf, b, l, r, color, dash, gap, width)
+    _dashed_vline(surf, l, t, b, color, dash, gap, width)
+    _dashed_vline(surf, r, t, b, color, dash, gap, width)
+
+
+# ---------- handle helpers ----------
+
+def _hit_test_clip_handle(bbox: pygame.Rect, mouse_canvas: tuple[int, int]) -> str | None:
+    """Return one of the 8 resize handle keys if hovered; else None."""
     centers = bbox_handles((bbox.left, bbox.top, bbox.width, bbox.height), C.ROT_HANDLE_OFFSET)
     mx, my = mouse_canvas
-
     size = C.HANDLE_SIZE + 2 * C.HANDLE_HIT_PAD
     half = size // 2
     for key in ("nw", "n", "ne", "e", "se", "s", "sw", "w"):
@@ -63,34 +102,12 @@ def _hit_test_handle(bbox: pygame.Rect, mouse_canvas: tuple[int, int]) -> str | 
         rect = pygame.Rect(cx - half, cy - half, size, size)
         if rect.collidepoint(mx, my):
             return key
-
-    rx, ry = centers["rot"]
-    r_knob = max(C.HANDLE_SIZE // 2 + C.HANDLE_HIT_PAD + 3, 10)
-    if (mx - rx) * (mx - rx) + (my - ry) * (my - ry) <= r_knob * r_knob:
-        return "rot"
-
-    nx, ny = centers["n"]
-    vx, vy = rx - nx, ry - ny
-    wx, wy = mx - nx, my - ny
-    seg_len2 = vx * vx + vy * vy
-    if seg_len2 > 0:
-        t = max(0.0, min(1.0, (wx * vx + wy * vy) / seg_len2))
-        px = nx + t * vx
-        py = ny + t * vy
-        dx = mx - px
-        dy = my - py
-        if dx * dx + dy * dy <= (C.ROT_STEM_HIT_RADIUS ** 2):
-            return "rot"
-
     return None
 
-def _draw_handles(overlay: pygame.Surface, bbox: pygame.Rect, hover_key: str | None) -> None:
-    # Stroke bbox
-    pygame.draw.rect(overlay, C.BBOX_COLOR, bbox, width=2)
 
+def _draw_clip_handles(overlay: pygame.Surface, bbox: pygame.Rect, hover_key: str | None) -> None:
+    """Draw 8 square resize handles for the clip window, with hover highlight."""
     centers = bbox_handles((bbox.left, bbox.top, bbox.width, bbox.height), C.ROT_HANDLE_OFFSET)
-
-    # Square handles
     s = C.HANDLE_SIZE
     half = s // 2
     for key in ("nw", "n", "ne", "e", "se", "s", "sw", "w"):
@@ -102,17 +119,27 @@ def _draw_handles(overlay: pygame.Surface, bbox: pygame.Rect, hover_key: str | N
         pygame.draw.rect(overlay, fill, rect)
         pygame.draw.rect(overlay, border, rect, width=1)
 
-    # Rotation handle + stem
+
+def _draw_handles_with_rotation(overlay: pygame.Surface, bbox: pygame.Rect) -> None:
+    """Selection bbox handles (8 squares) + rotation knob (existing behavior)."""
+    pygame.draw.rect(overlay, C.BBOX_COLOR, bbox, width=2)
+    centers = bbox_handles((bbox.left, bbox.top, bbox.width, bbox.height), C.ROT_HANDLE_OFFSET)
+
+    s = C.HANDLE_SIZE
+    half = s // 2
+    for key in ("nw", "n", "ne", "e", "se", "s", "sw", "w"):
+        cx, cy = centers[key]
+        rect = pygame.Rect(cx - half, cy - half, s, s)
+        pygame.draw.rect(overlay, C.HANDLE_FILL, rect)
+        pygame.draw.rect(overlay, C.HANDLE_BORDER, rect, width=1)
+
+    # Rotation knob + stem
     rx, ry = centers["rot"]
     stem_start = centers["n"]
     pygame.draw.line(overlay, C.ROT_STEM_COLOR, stem_start, (rx, ry), width=2)
+    pygame.draw.circle(overlay, C.ROT_HANDLE_FILL, (rx, ry), max(half, 5))
+    pygame.draw.circle(overlay, C.ROT_HANDLE_BORDER, (rx, ry), max(half, 5), width=1)
 
-    is_rot_hover = hover_key == "rot"
-    r = max(half, 5)
-    r_fill = C.ROT_HANDLE_HOVER_FILL if is_rot_hover else C.ROT_HANDLE_FILL
-    r_border = C.ROT_HANDLE_HOVER_BORDER if is_rot_hover else C.ROT_HANDLE_BORDER
-    pygame.draw.circle(overlay, r_fill, (rx, ry), r)
-    pygame.draw.circle(overlay, r_border, (rx, ry), r, width=1)
 
 def draw_overlay(overlay: pygame.Surface, scene: Scene, state: AppState) -> None:
     overlay.fill((0, 0, 0, 0))
@@ -124,16 +151,35 @@ def draw_overlay(overlay: pygame.Surface, scene: Scene, state: AppState) -> None
             pygame.draw.rect(overlay, C.ACCENT_FILL, rect)
             pygame.draw.rect(overlay, C.ACCENT_BORDER, rect, width=2)
 
-    # Clip window (live or static)
-    if state.mode == Mode.CLIP_WINDOW and state.clip.setting:
-        r = _norm_rect(state.clip.anchor, state.clip.current)
-        if r:
+    # --- Clip window visuals ---
+    if state.mode == Mode.CLIP_WINDOW:
+        # Live creating
+        if state.clip.setting:
+            r = _norm_rect(state.clip.anchor, state.clip.current)
+            if r:
+                pygame.draw.rect(overlay, C.CLIP_FILL, r)
+                _draw_dashed_rect(overlay, r, C.BBOX_COLOR, C.CLIP_BORDER_WIDTH, C.CLIP_DASH_LEN, C.CLIP_DASH_GAP)
+        # Existing window in clip mode: dashed border + handles with hover
+        elif state.clip.window:
+            r = _rect_from_tuple(state.clip.window)
+            pygame.draw.rect(overlay, C.CLIP_FILL, r)
+            _draw_dashed_rect(overlay, r, C.BBOX_COLOR, C.CLIP_BORDER_WIDTH, C.CLIP_DASH_LEN, C.CLIP_DASH_GAP)
+
+            # Determine hover handle (canvas coords from mouse)
+            mx, my = pygame.mouse.get_pos()
+            hover_key = None
+            if mx >= C.UI_W:
+                hover_key = _hit_test_clip_handle(r, (mx - C.UI_W, my))
+
+            _draw_clip_handles(overlay, r, hover_key)
+    else:
+        # Outside clip mode: static clip window (solid outline)
+        if state.clip.window:
+            r = _rect_from_tuple(state.clip.window)
             pygame.draw.rect(overlay, C.CLIP_FILL, r)
             pygame.draw.rect(overlay, C.CLIP_COLOR, r, width=2)
-    elif state.clip.window:
-        pygame.draw.rect(overlay, C.CLIP_FILL, _rect_from_tuple(state.clip.window))
-        pygame.draw.rect(overlay, C.CLIP_COLOR, _rect_from_tuple(state.clip.window), width=2)
 
+    # Clean selection sets
     _sanitize_selection(scene, state)
 
     # Selected-shape highlights (accent overlay)
@@ -151,16 +197,9 @@ def draw_overlay(overlay: pygame.Surface, scene: Scene, state: AppState) -> None
         c = scene.circles[i]
         draw_circle_bresenham(overlay, c.c, c.r, C.ACCENT)
 
-    # Selection bbox + handles (with hover highlight)
+    # Selection bbox + handles (with rotation)
     if state.selection.selected_lines or state.selection.selected_circles:
         sp = _selection_bbox_and_pivot(scene, state)
         if sp:
             bbox, _ = sp
-
-            # Canvas-relative mouse for hover (convert from screen coords)
-            mx, my = pygame.mouse.get_pos()
-            hover_key = None
-            if mx >= C.UI_W:
-                hover_key = _hit_test_handle(bbox, (mx - C.UI_W, my))
-
-            _draw_handles(overlay, bbox, hover_key)
+            _draw_handles_with_rotation(overlay, bbox)

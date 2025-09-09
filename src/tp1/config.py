@@ -69,4 +69,9 @@ ROT_HANDLE_BORDER: Color = (35, 120, 220)
 ROT_HANDLE_HOVER_FILL: Color = (255, 255, 255)
 ROT_HANDLE_HOVER_BORDER: Color = (0, 150, 255)
 
+# --- Clip window  ---
+CLIP_BORDER_WIDTH: int = 2
+CLIP_DASH_LEN: int = 6
+CLIP_DASH_GAP: int = 4
+
 

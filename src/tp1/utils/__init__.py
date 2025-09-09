@@ -8,6 +8,9 @@ from .geom import (
     rect_contains_point,
     rect_edges,
     rect_from_points,
+    move_rect,
+    clamp_rect_to_canvas,
+
 )
 from .transforms import (
     angle_from_center,
@@ -36,4 +39,6 @@ __all__ = [
     "scale_point_xy_i",
     "distance",
     "angle_from_center",
+    "move_rect",
+    "clamp_rect_to_canvas"
 ]

@@ -114,3 +114,20 @@ def bbox_handles(rect: Rect4, rot_offset: int) -> dict[str, Point2]:
     pos["rot"] = rot
 
     return pos
+
+def move_rect(rect: Rect4, dx: int, dy: int) -> Rect4:
+    """Translate a rect by (dx, dy) without clamping."""
+    l, t, w, h = rect
+    return (l + dx, t + dy, w, h)
+
+def clamp_rect_to_canvas(rect: Rect4, width: int, height: int) -> Rect4:
+    """
+    Clamp rect to [0..width]×[0..height].
+    If rect is larger than the canvas, it will be reduced to fit.
+    """
+    l, t, w, h = rect
+    w = min(max(0, w), width)
+    h = min(max(0, h), height)
+    l = max(0, min(l, width - w))
+    t = max(0, min(t, height - h))
+    return (int(l), int(t), int(w), int(h))
